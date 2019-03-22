@@ -215,9 +215,10 @@ def validate_epoch(model, criterion, valid_iter, device):
 
 
 def main(args):
-    # TODO: GPUに対応させる
     # TODO: Tensorboard
-
+    # TODO: README
+    # TODO: Model Save/Load
+    # TODO: tqdm
 
     train_dataset = TranslationDataset(
         spm_code_model=args.spm_code_model,
