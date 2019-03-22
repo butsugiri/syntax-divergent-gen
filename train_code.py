@@ -13,6 +13,7 @@ from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 
 class TranslationDataset(Dataset):
@@ -27,9 +28,10 @@ class TranslationDataset(Dataset):
         self.n_vocab_code = len(self.spm_code_model)
         self.n_vocab_source = len(self.spm_source_model)
 
+        logger.info('Loading code data from [{}]'.format(code_data))
         self.code_data = [l.strip() for l in open(code_data, 'r')]
+        logger.info('Loading source data from [{}]'.format(source_data))
         self.source_data = [l.strip() for l in open(source_data, 'r')]
-        self.logger = logger
 
     def __getitem__(self, idx):
         code_text = self.code_data[idx]
@@ -186,7 +188,7 @@ def train_epoch(model, criterion, train_iter, optimizer, device):
     total_loss = 0.0
     total_tokens = 0
     model.train()
-    for batch in train_iter:
+    for batch in tqdm(train_iter):
         pos, pos_len, src, src_len = batch
         logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
         loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1).to(device))
@@ -214,7 +216,7 @@ def validate_epoch(model, criterion, valid_iter, device):
     return total_loss / total_tokens
 
 
-def main(args):
+def train(args):
     # TODO: Tensorboard
     # TODO: README
     # TODO: Model Save/Load
@@ -250,18 +252,26 @@ def main(args):
 
     criterion = nn.NLLLoss(ignore_index=0)
     if args.optimizer == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     else:
         raise NotImplementedError
 
+    best_valid_loss = 0.0
     for epoch in range(args.epoch):
+        logger.info('Training: epoch [{}]'.format(epoch))
         train_loss = train_epoch(model, criterion, train_iter, optimizer, device)
+        logger.info('Validation: epoch [{}]'.format(epoch))
         valid_loss = validate_epoch(model, criterion, valid_iter, device)
-        logger.info('Complete epoch {}: Train {}\tValid {}'.format(epoch, train_loss, valid_loss))
+        logger.info('Complete epoch {}\tTrain loss: {}\tValid loss: {}'.format(epoch, train_loss, valid_loss))
+
+        if epoch == 0 or valid_loss < best_valid_loss:
+            model_path = 'best_model.pt'
+            logger.info('Saving model to [{}]'.format(model_path))
+            torch.save(model.state_dict(), model_path)
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='My sequence-to-sequence model')
+    parser = argparse.ArgumentParser(description='Sequence code learning script')
     parser.add_argument('--train_code', type=os.path.abspath, help='write here')
     parser.add_argument('--train_source', type=os.path.abspath, help='write here')
     parser.add_argument('--valid_code', type=os.path.abspath, help='write here')
@@ -274,7 +284,7 @@ def get_args():
 
     parser.add_argument('--epoch', default=30, type=int, help='write here')
     parser.add_argument('--batch_size', default=32, type=int, help='write here')
-    parser.add_argument('--embed_dim', default=128, type=int, help='write here')
+
     parser.add_argument('--hidden_dim', default=128, type=int, help='write here')
     parser.add_argument('--optimizer', default='Adam', type=str, help='write here')
     parser.add_argument('--lr', default=0.001, type=float, help='write here')
@@ -289,4 +299,4 @@ def get_args():
 
 if __name__ == "__main__":
     args = get_args()
-    main(args)
+    train(args)
