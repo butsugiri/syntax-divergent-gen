@@ -17,26 +17,31 @@ from torch.utils.data import Dataset
 
 class TranslationDataset(Dataset):
 
-    def __init__(self, source_data, target_data, spm_model):
-        self.spm_model = spm.SentencePieceProcessor()
-        self.spm_model.Load(spm_model)
-        self.n_vocab = len(self.spm_model)
+    def __init__(self, code_data, source_data, spm_code_model, spm_source_model):
+        self.spm_code_model = spm.SentencePieceProcessor()
+        self.spm_code_model.Load(spm_code_model)
 
+        self.spm_source_model = spm.SentencePieceProcessor()
+        self.spm_source_model.Load(spm_source_model)
+
+        self.n_vocab_code = len(self.spm_code_model)
+        self.n_vocab_source = len(self.spm_source_model)
+
+        self.code_data = [l.strip() for l in open(code_data, 'r')]
         self.source_data = [l.strip() for l in open(source_data, 'r')]
-        self.target_data = [l.strip() for l in open(target_data, 'r')]
         self.logger = logger
 
     def __getitem__(self, idx):
-        src_text = self.source_data[idx]
-        trg_text = self.target_data[idx]
-        source_indices = torch.Tensor(self._encode_text(src_text, False))
-        target_indices = torch.Tensor(self._encode_text(trg_text, True))
-        return source_indices, target_indices
+        code_text = self.code_data[idx]
+        source_text = self.source_data[idx]
+        code_indices = torch.Tensor(self._encode_text(code_text, False, spm_model=self.spm_code_model))
+        source_indices = torch.Tensor(self._encode_text(source_text, True, spm_model=self.spm_source_model))
+        return code_indices, source_indices
 
-    def _encode_text(self, text, add_special_symbol):
-        indices = self.spm_model.encode_as_ids(text)
+    def _encode_text(self, text, add_special_symbol, spm_model):
+        indices = spm_model.encode_as_ids(text)
         if add_special_symbol:
-            indices = [self.spm_model.bos_id()] + indices + [self.spm_model.eos_id()]
+            indices = [spm_model.bos_id()] + indices + [spm_model.eos_id()]
         return indices
 
     def __len__(self):
@@ -65,7 +70,7 @@ def collate_fn(data):
         for i, seq in enumerate(sequences):
             end = lengths[i]
             padded_seqs[i, :end] = seq[:end]
-        return padded_seqs, lengths
+        return padded_seqs, torch.tensor(lengths)
 
     # sort a list by sequence length (descending order) to use pack_padded_sequence
     data.sort(key=lambda x: len(x[0]), reverse=True)
@@ -148,11 +153,11 @@ class EmbeddingCompressor(nn.Module):
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, n_vocab, embed_size, hidden_size, n_codebook, n_centroid):
+    def __init__(self, n_vocab_code, n_vocab_source, embed_size, hidden_size, n_codebook, n_centroid):
         super(EncoderDecoder, self).__init__()
-        self.code_encoder = RNNEncoder(n_vocab, embed_size, hidden_size)
-        self.src_encoder = RNNEncoder(n_vocab, embed_size, hidden_size)
-        self.decoder = RNNDecoder(n_vocab, embed_size, hidden_size)
+        self.code_encoder = RNNEncoder(n_vocab_code, embed_size, hidden_size)
+        self.src_encoder = RNNEncoder(n_vocab_source, embed_size, hidden_size)
+        self.decoder = RNNDecoder(n_vocab_code, embed_size, hidden_size)
 
         self.codes = EmbeddingCompressor(n_codebook, n_centroid, hidden_size, tau=1.0)
 
@@ -165,26 +170,26 @@ class EncoderDecoder(nn.Module):
         code_sum = self.codes(hs)
 
         # sort source sequence in decending order
-        sorted_src_len, inds = torch.sort(torch.tensor(src_len), 0, descending=True)
+        sorted_src_len, inds = torch.sort(src_len.clone().detach(), 0, descending=True)
         sorted_src = src[inds]
         _, (hs, cs) = self.src_encoder(sorted_src, sorted_src_len)
         # unsort sequence to original order
         hs = torch.zeros_like(hs).scatter_(1, inds[None, :, None].expand(1, hs.shape[1], hs.shape[2]), hs)
 
         dec_init_hs = hs + code_sum[None]
-        cs = torch.zero_(torch.empty(cs.size()))
+        cs = torch.zero_(torch.empty_like(cs))
         logits = self.decoder(pos, pos_len, (dec_init_hs, cs))
         return logits
 
 
-def train_epoch(model, criterion, train_iter, optimizer):
+def train_epoch(model, criterion, train_iter, optimizer, device):
     total_loss = 0.0
     total_tokens = 0
     model.train()
     for batch in train_iter:
         pos, pos_len, src, src_len = batch
-        logits = model(pos, pos_len, src, src_len)
-        loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1))
+        logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
+        loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1).to(device))
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -195,14 +200,14 @@ def train_epoch(model, criterion, train_iter, optimizer):
     return total_loss / total_tokens
 
 
-def validate_epoch(model, criterion, valid_iter):
+def validate_epoch(model, criterion, valid_iter, device):
     total_loss = 0.0
     total_tokens = 0
     model.eval()
     for batch in valid_iter:
         pos, pos_len, src, src_len = batch
-        logits = model(pos, pos_len, src, src_len)
-        loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1))
+        logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
+        loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1).to(device))
         n_tokens = len(pos.nonzero())
         total_loss += loss.data * n_tokens
         total_tokens += n_tokens
@@ -211,26 +216,37 @@ def validate_epoch(model, criterion, valid_iter):
 
 def main(args):
     # TODO: GPUに対応させる
+    # TODO: Tensorboard
+
 
     train_dataset = TranslationDataset(
-        spm_model=args.spm_model,
-        source_data=args.train_source,
-        target_data=args.train_target
+        spm_code_model=args.spm_code_model,
+        spm_source_model=args.spm_source_model,
+        code_data=args.train_code,
+        source_data=args.train_source
     )
     valid_dataset = TranslationDataset(
-        spm_model=args.spm_model,
-        source_data=args.valid_source,
-        target_data=args.valid_target
+        spm_code_model=args.spm_code_model,
+        spm_source_model=args.spm_source_model,
+        code_data=args.valid_code,
+        source_data=args.valid_source
     )
     train_iter = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn)
     valid_iter = DataLoader(valid_dataset, batch_size=args.batch_size, collate_fn=collate_fn)
 
-    model = EncoderDecoder(train_dataset.n_vocab,
-                           embed_size=args.embed_dim,
-                           hidden_size=args.hidden_dim,
-                           n_codebook=args.codebook,
-                           n_centroid=args.centroid
-                           )
+    model = EncoderDecoder(
+        n_vocab_code=train_dataset.n_vocab_code,
+        n_vocab_source=train_dataset.n_vocab_source,
+        embed_size=args.embed_dim,
+        hidden_size=args.hidden_dim,
+        n_codebook=args.codebook,
+        n_centroid=args.centroid
+    )
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() and args.gpu >= 0 else "cpu")
+    if device.type == 'cuda':
+        model.to(device)
+
     criterion = nn.NLLLoss(ignore_index=0)
     if args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -238,18 +254,23 @@ def main(args):
         raise NotImplementedError
 
     for epoch in range(args.epoch):
-        train_loss = train_epoch(model, criterion, train_iter, optimizer)
-        valid_loss = validate_epoch(model, criterion, valid_iter)
+        train_loss = train_epoch(model, criterion, train_iter, optimizer, device)
+        valid_loss = validate_epoch(model, criterion, valid_iter, device)
         logger.info('Complete epoch {}: Train {}\tValid {}'.format(epoch, train_loss, valid_loss))
 
 
 def get_args():
     parser = argparse.ArgumentParser(description='My sequence-to-sequence model')
+    parser.add_argument('--train_code', type=os.path.abspath, help='write here')
     parser.add_argument('--train_source', type=os.path.abspath, help='write here')
-    parser.add_argument('--train_target', type=os.path.abspath, help='write here')
+    parser.add_argument('--valid_code', type=os.path.abspath, help='write here')
     parser.add_argument('--valid_source', type=os.path.abspath, help='write here')
-    parser.add_argument('--valid_target', type=os.path.abspath, help='write here')
-    parser.add_argument('--spm_model', type=os.path.abspath, help='write here')
+
+    parser.add_argument('--gpu', type=int, default=-1, help='write here')
+
+    parser.add_argument('--spm_code_model', type=os.path.abspath, help='write here')
+    parser.add_argument('--spm_source_model', type=os.path.abspath, help='write here')
+
     parser.add_argument('--epoch', default=30, type=int, help='write here')
     parser.add_argument('--batch_size', default=32, type=int, help='write here')
     parser.add_argument('--embed_dim', default=128, type=int, help='write here')
