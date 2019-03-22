@@ -19,14 +19,15 @@ class TranslationDataset(Dataset):
 
         logger.info('Loading code data from [{}]'.format(code_data))
         self.code_data = [l.strip() for l in open(code_data, 'r')]
+
         logger.info('Loading source data from [{}]'.format(source_data))
         self.source_data = [l.strip() for l in open(source_data, 'r')]
 
     def __getitem__(self, idx):
         code_text = self.code_data[idx]
         source_text = self.source_data[idx]
-        code_indices = torch.Tensor(self._encode_text(code_text, False, spm_model=self.spm_code_model))
-        source_indices = torch.Tensor(self._encode_text(source_text, True, spm_model=self.spm_source_model))
+        code_indices = torch.LongTensor(self._encode_text(code_text, False, spm_model=self.spm_code_model))
+        source_indices = torch.LongTensor(self._encode_text(source_text, True, spm_model=self.spm_source_model))
         return code_indices, source_indices
 
     def _encode_text(self, text, add_special_symbol, spm_model):

@@ -50,6 +50,7 @@ def validate_epoch(model, criterion, valid_iter, device):
 
 def train(args):
     res = resource.Resource(args, train=True)
+    res.save_config_file()
     logger = res.logger
     # TODO: Tensorboard
     # TODO: README
@@ -102,6 +103,7 @@ def train(args):
 
             logger.info('Saving model to [{}]'.format(model_path))
             torch.save(model.state_dict(), model_path)
+            best_valid_loss = valid_loss
 
 
 def get_args():

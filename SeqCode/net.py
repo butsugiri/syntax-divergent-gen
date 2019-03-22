@@ -59,18 +59,22 @@ class EmbeddingCompressor(nn.Module):
         K = self.K
 
         self.l1 = nn.Linear(hidden_dim, M * K)
-        # self.l2 = L.Linear(M * K // 2, M * K, initialW=u_init, initial_bias=u_init)
         uni_mat = torch.nn.init.uniform_(torch.empty(M * K, hidden_dim))
         self.codebook = nn.Parameter(uni_mat)
 
     def forward(self, hidden_vec):
-        probs = F.gumbel_softmax(self.l1(hidden_vec).view(-1, self.M * self.K), self.tau)
+        hs = F.softplus(self.l1(hidden_vec))
+        logit = torch.log(hs + 1e-08).view(-1, self.M, self.K).view(-1, self.K)
+        probs = F.gumbel_softmax(logit, self.tau).view(-1, self.M * self.K)
         # probs ==> batchsize, M * K
         code_sum = torch.matmul(probs, self.codebook)
         return code_sum
 
     def predict(self, hidden_vec):
-        raise NotImplementedError
+        hs = F.softplus(self.l1(hidden_vec))
+        logit = torch.log(hs + 1e-08).view(-1, self.M, self.K)
+        codes_batch = logit.argmax(dim=2)
+        return codes_batch
 
 
 class EncoderDecoder(nn.Module):
@@ -101,3 +105,8 @@ class EncoderDecoder(nn.Module):
         cs = torch.zero_(torch.empty_like(cs))
         logits = self.decoder(pos, pos_len, (dec_init_hs, cs))
         return logits
+
+    def predict(self, pos, pos_len):
+        _, (hs, cs) = self.code_encoder(pos, pos_len)
+        codes_batch = self.codes.predict(hs)
+        return codes_batch
