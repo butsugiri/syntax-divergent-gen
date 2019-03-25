@@ -11,13 +11,13 @@ import stanfordnlp
 def get_args():
     parser = argparse.ArgumentParser(description='pos tagging')
     parser.add_argument('--input', '-i', required=True, type=os.path.abspath, help='write here')
+    parser.add_argument('--model', '-m', required=True, type=os.path.abspath, help='write here')
     args = parser.parse_args()
     return args
 
 
 def main(args):
-    MODELS_DIR='/work/kiyono/stanfordnlp_model/'
-    nlp = stanfordnlp.Pipeline(processors='tokenize,pos', models_dir=MODELS_DIR, pos_batch_size=6000)
+    nlp = stanfordnlp.Pipeline(processors='tokenize,pos', models_dir=args.model, pos_batch_size=6000)
 
     with open(args.input, 'r') as fi:
         for line in fi:
