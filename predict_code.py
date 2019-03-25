@@ -17,7 +17,7 @@ from SeqCode import resource
 def predict(model, test_iter, device):
     model.eval()
     for batch in tqdm(test_iter):
-        pos, pos_len, src, src_len = batch
+        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch
         codes_batch = model.predict(pos.to(device), pos_len.to(device))
         for codes in codes_batch.cpu().numpy().tolist():
             print(' '.join(['<c{}>'.format(c) for c in codes]))

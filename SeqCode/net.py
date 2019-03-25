@@ -39,7 +39,7 @@ class RNNDecoder(nn.Module):
         for ex in exs.unbind(dim=1):
             hs, cs = self.lstm(ex, (hs, cs))
             hs_list.append(hs)
-        cat_hs = torch.cat(hs_list, dim=0)
+        cat_hs = torch.stack(hs_list, 1).view(-1, hs_list[0].size(1))
         logits = self.linear(cat_hs)
         return logits
 
@@ -90,7 +90,7 @@ class EncoderDecoder(nn.Module):
         self.K = n_centroid
 
     def forward(self, pos, pos_len, src, src_len):
-        _, (hs, cs) = self.code_encoder(pos, pos_len)
+        _, (hs, cs) = self.code_encoder(pos[:, 1:], pos_len - 1)
         # hs.size() ==> n_layer, batch_size, hidden_dim
         code_sum = self.codes(hs)
 
@@ -107,6 +107,6 @@ class EncoderDecoder(nn.Module):
         return logits
 
     def predict(self, pos, pos_len):
-        _, (hs, cs) = self.code_encoder(pos, pos_len)
+        _, (hs, cs) = self.code_encoder(pos[:, 1:], pos_len - 1)
         codes_batch = self.codes.predict(hs)
         return codes_batch

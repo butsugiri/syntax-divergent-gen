@@ -26,14 +26,17 @@ class TranslationDataset(Dataset):
     def __getitem__(self, idx):
         code_text = self.code_data[idx]
         source_text = self.source_data[idx]
-        code_indices = torch.LongTensor(self._encode_text(code_text, False, spm_model=self.spm_code_model))
-        source_indices = torch.LongTensor(self._encode_text(source_text, True, spm_model=self.spm_source_model))
-        return code_indices, source_indices
+        code_indices = torch.LongTensor(self._encode_text(code_text, add_bos=True, add_eos=False, spm_model=self.spm_code_model))
+        source_indices = torch.LongTensor(self._encode_text(source_text, add_bos=True, add_eos=True, spm_model=self.spm_source_model))
+        trg_code_indices = torch.LongTensor(self._encode_text(code_text, add_bos=False, add_eos=True, spm_model=self.spm_code_model))
+        return code_indices, source_indices, trg_code_indices
 
-    def _encode_text(self, text, add_special_symbol, spm_model):
+    def _encode_text(self, text, add_bos, add_eos, spm_model):
         indices = spm_model.encode_as_ids(text)
-        if add_special_symbol:
-            indices = [spm_model.bos_id()] + indices + [spm_model.eos_id()]
+        if add_bos:
+            indices = [spm_model.bos_id()] + indices
+        if add_eos:
+            indices = indices + [spm_model.eos_id()]
         return indices
 
     def __len__(self):
@@ -68,10 +71,11 @@ def collate_fn(data):
     data.sort(key=lambda x: len(x[0]), reverse=True)
 
     # seperate source and target sequences
-    src_seqs, trg_seqs = zip(*data)
+    code_seqs, src_seqs, trg_code_seqs = zip(*data)
 
     # merge sequences (from tuple of 1D tensor to 2D tensor)
+    code_seqs, code_lengths = merge(code_seqs)
     src_seqs, src_lengths = merge(src_seqs)
-    trg_seqs, trg_lengths = merge(trg_seqs)
+    trg_code_seqs, trg_code_lengths = merge(trg_code_seqs)
 
-    return src_seqs, src_lengths, trg_seqs, trg_lengths
+    return code_seqs, code_lengths, src_seqs, src_lengths, trg_code_seqs, trg_code_lengths

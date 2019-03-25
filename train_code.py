@@ -11,8 +11,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from SeqCode import net
 from SeqCode import dataset
+from SeqCode import net
 from SeqCode import resource
 
 
@@ -21,17 +21,22 @@ def train_epoch(model, criterion, train_iter, optimizer, device):
     total_tokens = 0
     model.train()
     for batch in tqdm(train_iter):
-        pos, pos_len, src, src_len = batch
+        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch
         logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
-        loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1).to(device))
+        loss = criterion(F.log_softmax(logits, dim=1), trg_pos.view(-1).to(device))
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        n_tokens = len(pos.nonzero())
+        n_tokens = len(trg_pos.nonzero())
         total_loss += loss.data * n_tokens
         total_tokens += n_tokens
-    return total_loss / total_tokens
+
+        nonzero_indices = trg_pos.view(-1).nonzero()
+        nonzero_targets = trg_pos.view(-1)[nonzero_indices]
+        nonzero_predicts = logits.argmax(1).cpu()[nonzero_indices]
+        correct_predicts = int(torch.sum(nonzero_targets == nonzero_predicts))
+    return total_loss / total_tokens, correct_predicts / total_tokens
 
 
 def validate_epoch(model, criterion, valid_iter, device):
@@ -39,9 +44,9 @@ def validate_epoch(model, criterion, valid_iter, device):
     total_tokens = 0
     model.eval()
     for batch in tqdm(valid_iter):
-        pos, pos_len, src, src_len = batch
+        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch
         logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
-        loss = criterion(F.log_softmax(logits, dim=1), pos.view(-1).to(device))
+        loss = criterion(F.log_softmax(logits, dim=1), trg_pos.view(-1).to(device))
         n_tokens = len(pos.nonzero())
         total_loss += loss.data * n_tokens
         total_tokens += n_tokens
@@ -52,9 +57,10 @@ def train(args):
     res = resource.Resource(args, train=True)
     res.save_config_file()
     logger = res.logger
-    # TODO: Tensorboard
-    # TODO: README
-    # TODO: Model Save/Load
+
+    # TODO: support Tensorboard
+    # TODO: add README
+    # TODO: Report Accuracy
 
     train_dataset = dataset.TranslationDataset(
         spm_code_model=args.spm_code_model,
@@ -93,7 +99,7 @@ def train(args):
     best_valid_loss = 0.0
     for epoch in range(args.epoch):
         logger.info('Training: epoch [{}]'.format(epoch))
-        train_loss = train_epoch(model, criterion, train_iter, optimizer, device)
+        train_loss, train_acc = train_epoch(model, criterion, train_iter, optimizer, device)
         logger.info('Validation: epoch [{}]'.format(epoch))
         valid_loss = validate_epoch(model, criterion, valid_iter, device)
         logger.info('Complete epoch {}\tTrain loss: {}\tValid loss: {}'.format(epoch, train_loss, valid_loss))
@@ -117,8 +123,8 @@ def get_args():
     parser.add_argument('--spm_source_model', type=os.path.abspath, help='write here')
     parser.add_argument('--epoch', default=30, type=int, help='write here')
     parser.add_argument('--batch_size', default=32, type=int, help='write here')
-    parser.add_argument('--embed_dim', default=128, type=int, help='write here')
-    parser.add_argument('--hidden_dim', default=128, type=int, help='write here')
+    parser.add_argument('--embed_dim', default=512, type=int, help='write here')
+    parser.add_argument('--hidden_dim', default=512, type=int, help='write here')
     parser.add_argument('--optimizer', default='Adam', type=str, help='write here')
     parser.add_argument('--lr', default=0.001, type=float, help='write here')
     # codes
