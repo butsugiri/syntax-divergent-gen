@@ -17,10 +17,15 @@ from SeqCode import resource
 def predict(model, test_iter, device):
     model.eval()
     for batch in tqdm(test_iter):
-        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch
+        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch['net_input']
+        indices = batch['indices']
+
         codes_batch = model.predict(pos.to(device), pos_len.to(device))
-        for codes in codes_batch.cpu().numpy().tolist():
-            print(' '.join(['<c{}>'.format(c) for c in codes]))
+        codes_list = codes_batch.cpu().numpy().tolist()
+        sorted_codes_and_idx = sorted([(codes, idx) for codes, idx in zip(codes_list, indices)], key=lambda x: x[1])
+        for codes, idx in sorted_codes_and_idx:
+            code_str = ' '.join(['<c{}>'.format(c) for c in codes])
+            print('{}\t{}'.format(idx, code_str))
 
 
 def test(args):
@@ -29,7 +34,7 @@ def test(args):
     config = res.config
     logger = res.logger
 
-    test_dataset = dataset.TranslationDataset(
+    test_dataset = dataset.CodeLearningDataset(
         spm_code_model=config['spm_code_model'],
         spm_source_model=config['spm_source_model'],
         code_data=args.test_code,

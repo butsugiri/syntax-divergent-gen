@@ -21,7 +21,7 @@ def train_epoch(model, criterion, train_iter, optimizer, device):
     total_tokens = 0
     model.train()
     for batch in tqdm(train_iter):
-        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch
+        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch['net_input']
         logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
         loss = criterion(F.log_softmax(logits, dim=1), trg_pos.view(-1).to(device))
         optimizer.zero_grad()
@@ -44,7 +44,7 @@ def validate_epoch(model, criterion, valid_iter, device):
     total_tokens = 0
     model.eval()
     for batch in tqdm(valid_iter):
-        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch
+        pos, pos_len, src, src_len, trg_pos, trg_pos_len = batch['net_input']
         logits = model(pos.to(device), pos_len.to(device), src.to(device), src_len.to(device))
         loss = criterion(F.log_softmax(logits, dim=1), trg_pos.view(-1).to(device))
         n_tokens = len(pos.nonzero())
@@ -62,13 +62,14 @@ def train(args):
     # TODO: add README
     # TODO: Report Accuracy
 
-    train_dataset = dataset.TranslationDataset(
+    train_dataset = dataset.CodeLearningDataset(
         spm_code_model=args.spm_code_model,
         spm_source_model=args.spm_source_model,
         code_data=args.train_code,
-        source_data=args.train_source
+        source_data=args.train_source,
+        size=args.size
     )
-    valid_dataset = dataset.TranslationDataset(
+    valid_dataset = dataset.CodeLearningDataset(
         spm_code_model=args.spm_code_model,
         spm_source_model=args.spm_source_model,
         code_data=args.valid_code,
@@ -118,6 +119,7 @@ def get_args():
     parser.add_argument('--train_source', type=os.path.abspath, help='write here')
     parser.add_argument('--valid_code', type=os.path.abspath, help='write here')
     parser.add_argument('--valid_source', type=os.path.abspath, help='write here')
+    parser.add_argument('--size', type=int, default=100, help='ratio of the dataset to use')
     parser.add_argument('--gpu', type=int, default=-1, help='write here')
     parser.add_argument('--spm_code_model', type=os.path.abspath, help='write here')
     parser.add_argument('--spm_source_model', type=os.path.abspath, help='write here')

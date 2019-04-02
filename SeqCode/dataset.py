@@ -5,9 +5,9 @@ from logzero import logger
 from torch.utils.data import Dataset
 
 
-class TranslationDataset(Dataset):
+class CodeLearningDataset(Dataset):
 
-    def __init__(self, code_data, source_data, spm_code_model, spm_source_model):
+    def __init__(self, code_data, source_data, spm_code_model, spm_source_model, size=100):
         self.spm_code_model = spm.SentencePieceProcessor()
         self.spm_code_model.Load(spm_code_model)
 
@@ -23,13 +23,21 @@ class TranslationDataset(Dataset):
         logger.info('Loading source data from [{}]'.format(source_data))
         self.source_data = [l.strip() for l in open(source_data, 'r')]
 
+        if size != 100:
+            N = len(self.code_data)
+            self.code_data = self.code_data[:int(N * (size / 100))]
+            self.source_data = self.source_data[:int(N * (size / 100))]
+
     def __getitem__(self, idx):
         code_text = self.code_data[idx]
         source_text = self.source_data[idx]
-        code_indices = torch.LongTensor(self._encode_text(code_text, add_bos=True, add_eos=False, spm_model=self.spm_code_model))
-        source_indices = torch.LongTensor(self._encode_text(source_text, add_bos=True, add_eos=True, spm_model=self.spm_source_model))
-        trg_code_indices = torch.LongTensor(self._encode_text(code_text, add_bos=False, add_eos=True, spm_model=self.spm_code_model))
-        return code_indices, source_indices, trg_code_indices
+        code_indices = torch.LongTensor(
+            self._encode_text(code_text, add_bos=True, add_eos=False, spm_model=self.spm_code_model))
+        source_indices = torch.LongTensor(
+            self._encode_text(source_text, add_bos=True, add_eos=True, spm_model=self.spm_source_model))
+        trg_code_indices = torch.LongTensor(
+            self._encode_text(code_text, add_bos=False, add_eos=True, spm_model=self.spm_code_model))
+        return idx, code_indices, source_indices, trg_code_indices
 
     def _encode_text(self, text, add_bos, add_eos, spm_model):
         indices = spm_model.encode_as_ids(text)
@@ -44,7 +52,7 @@ class TranslationDataset(Dataset):
 
 
 def collate_fn(data):
-    """Creates mini-batch tensors from the list of tuples (src_seq, trg_seq).
+    """Creates mini-batch tensors from the list of tuples (code_indices, source_indices, trg_code_indices).
     We should build a custom collate_fn rather than using default collate_fn,
     because merging sequences (including padding) is not supported in default.
     Seqeuences are padded to the maximum length of mini-batch sequences (dynamic padding).
@@ -68,14 +76,18 @@ def collate_fn(data):
         return padded_seqs, torch.tensor(lengths)
 
     # sort a list by sequence length (descending order) to use pack_padded_sequence
-    data.sort(key=lambda x: len(x[0]), reverse=True)
+    data.sort(key=lambda x: len(x[1]), reverse=True)
 
     # seperate source and target sequences
-    code_seqs, src_seqs, trg_code_seqs = zip(*data)
+    indices, code_seqs, src_seqs, trg_code_seqs = zip(*data)
 
     # merge sequences (from tuple of 1D tensor to 2D tensor)
     code_seqs, code_lengths = merge(code_seqs)
     src_seqs, src_lengths = merge(src_seqs)
     trg_code_seqs, trg_code_lengths = merge(trg_code_seqs)
 
-    return code_seqs, code_lengths, src_seqs, src_lengths, trg_code_seqs, trg_code_lengths
+    mini_batch = {
+        'net_input': (code_seqs, code_lengths, src_seqs, src_lengths, trg_code_seqs, trg_code_lengths),
+        'indices': indices
+    }
+    return mini_batch
